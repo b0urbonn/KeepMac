@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>KeepMac</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.keepmac.app</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>KeepMac</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>26.0</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>KeepMac — a local storage cleanup tool</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>KeepMac scans for safe-to-delete build artifacts (node_modules, build output, caches) inside your projects.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>KeepMac scans for safe-to-delete build artifacts (node_modules, build output, caches) inside your projects.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>KeepMac lists large files in Downloads so you can review and delete them to free space.</string>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>KeepMac lists local iPhone/iPad backup files so you can delete old backups and free space.</string>
+</dict>
+</plist>

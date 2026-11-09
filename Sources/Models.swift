@@ -30,7 +30,7 @@ enum Category: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .build: return "node_modules, .build, target, venvs… inside project folders"
-        case .caches: return "Xcode, VS Code, Homebrew, npm/pip, Docker, simulators…"
+        case .caches: return "Xcode, VS Code, Homebrew, npm/pip, Docker, simulators, app caches…"
         case .ai: return "Ollama, HuggingFace, LM Studio and other model caches"
         case .general: return "Downloads, Trash, app caches, logs, large files, backups"
         }
@@ -114,8 +114,10 @@ enum Descriptions {
             return ("An Xcode archive (packaged app build for distribution). Only delete if you no longer need this build.", true)
         case _ where has("Homebrew"):
             return ("Homebrew's downloaded bottles and source archives. Safe to delete — same as `brew cleanup`.", false)
-        case _ where name == ".npm" || name == "_cacache" || has("node-gyp"):
+        case _ where name == ".npm" || name == "_cacache" || has("node-gyp") || has(".npm-cache"):
             return ("npm's download cache. Safe to delete — packages are re-downloaded on the next install.", false)
+        case _ where name == "Bun Global Packages" || name == "pnpm Global Packages":
+            return ("Globally installed packages for the JavaScript runtime. Deleting removes them — reinstall with the package manager when needed.", true)
         case _ where has("pnpm") || has("yarn") || has("bun") || has("deno"):
             return ("JavaScript package-manager cache. Safe to delete — dependencies are re-downloaded when needed.", false)
         case _ where has("pip"):
@@ -156,6 +158,27 @@ enum Descriptions {
             return ("A GPT4All/Nomic model. Deleting frees a lot of space — re-download in the app.", true)
         case _ where has("whisper") || has("torch"):
             return ("A downloaded ML model/cache. Deleting frees space — it is re-downloaded when the tool needs it again.", true)
+        case _ where has("/.cache/"):
+            return ("A cache folder under ~/.cache used by a developer tool or app. Safe to delete — it is recreated or re-downloaded when needed.", false)
+        case _ where has("pub-cache"):
+            return ("Dart's pub package cache. Safe to delete — packages are re-fetched on the next `pub get`.", false)
+        case _ where has(".vscode/extensions") || has(".cursor/extensions") || has(".windsurf/extensions"):
+            return ("Editor extensions. Deleting removes all installed extensions — reinstall them from the marketplace on next launch.", false)
+        case _ where has("HTTPStorages") || has("Library/WebKit"):
+            return ("Website data (cookies, caches) stored by an app. Deleting may sign you out of sites — the data is recreated as you browse.", true)
+        case _ where has("/Containers/"):
+            return ("Cache stored inside an app's sandbox container. Safe to delete — the app recreates it.", false)
+        case _ where has("Application Support"):
+            return ("Cache data stored by an application. Safe to delete — the app recreates it; you may need to sign in to some sites again.", false)
+        case _ where has(".codex/"):
+            return ("Codex CLI plugin/temp/cache data — re-downloaded automatically on the next run.", false)
+        case _ where has(".composer"):
+            return ("Composer's downloaded package cache. Safe to delete — packages are re-fetched on the next install.", false)
+        case _ where has("/.gem/"):
+            return ("Ruby gems installed for your user account. Deleting removes them — reinstall with `gem install` when needed.", true)
+        case _ where has("share/uv/") || has("fnm") || has("/mise/") || has("/.asdf/")
+            || has("volta") || has("/.proto/") || has(".sdkman") || has("nodenv") || has("jenv"):
+            return ("A toolchain/runtime installed by a version manager. Deleting removes it — reinstall with the manager when a project needs it.", true)
         default:
             return ("Cache/data stored by a developer tool. Generally safe to delete — the tool recreates or re-downloads it.", false)
         }

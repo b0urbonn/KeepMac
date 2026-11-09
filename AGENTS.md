@@ -32,6 +32,18 @@ bundles the .app manually, ad-hoc signs, packages a DMG via `hdiutil`.
   Documents/Desktop/Downloads and Media Library (MobileSync backups).
   Usage strings live in Info.plist; `~/Music`, `~/Movies`, `~/Pictures`
   are skipped in the walk to avoid pointless prompts.
+- **Menu bar**: a `MenuBarExtra` (`.window` style) lives alongside the main
+  `Window` scene — the app keeps its Dock icon. `MenuBarPanel.swift` reads
+  the same `Store`; "Clean All Safe…" calls `openWindow(id: "main")` then
+  `store.cleanAllSafe()`, which works because the delete-confirm sheet is
+  bound to `store.showDeleteConfirm` and presents on appear.
+- **Scan coverage invariant**: every path returned by `fixedItems()` is in
+  `claimedPaths`, and the project walk skips any directory equal to or
+  inside a claimed path (`isClaimedOrInside`). When adding collectors,
+  always go through `children`/`single`/`Found` inside `fixedItems()` —
+  never let the walk and a collector claim overlapping trees or sizes
+  double-count. Hidden home dirs (dot-dirs) ARE walked now; only
+  Library/Downloads/Applications/media are skipped at depth 1.
 
 ## Layout
 
@@ -41,4 +53,6 @@ bundles the .app manually, ad-hoc signs, packages a DMG via `hdiutil`.
 - `Sources/Store.swift` — scan/delete orchestration, settings
 - `Sources/Explainer.swift` — Apple Intelligence "explain this item"
 - `Sources/ContentView.swift`, `SettingsView.swift`, `KeepMacApp.swift` — UI
+- `Sources/MenuBarPanel.swift` — menu-bar extra panel (status, top items,
+  Rescan / Clean All Safe / Open / Quit)
 - `Tools/gen_icon.swift` — renders the app icon (AppKit, no assets needed)

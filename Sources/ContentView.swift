@@ -404,7 +404,9 @@ struct BrowserHeader: View {
             Text("\(count) \(count == 1 ? "item" : "items")")
                 .font(.headline).monospacedDigit()
             Menu {
-                Button("Select Eligible Items") { store.setSelection(true, for: store.selectedCategory) }
+                Button("Select All Items") { store.setSelection(true, for: store.selectedCategory, includeCaution: true) }
+                Button("Select Safe Items") { store.setSelection(true, for: store.selectedCategory) }
+                Divider()
                 Button("Deselect All") { store.setSelection(false, for: store.selectedCategory) }
             } label: {
                 Label("Select", systemImage: "checklist")
@@ -412,7 +414,7 @@ struct BrowserHeader: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
             .disabled(store.scanning || store.deleting || count == 0)
-            .help("Applies to this category, including filtered-out items. Review items are excluded from bulk selection.")
+            .help("Applies to this category, including filtered-out items. \"Select All\" includes needs-review items; \"Select Safe Items\" skips them.")
             Spacer(minLength: 8)
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
@@ -554,6 +556,13 @@ struct CleanupBar: View {
                     .help(store.statusText)
             }
             Spacer(minLength: 8)
+            Button { store.cleanAllSafe() } label: {
+                Label("Clean All Safe", systemImage: "sparkles")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .disabled(!store.items.contains { !$0.caution } || store.deleting || store.scanning)
+            .help("Select every safe item and review them for deletion — needs-review items are skipped")
             Button { store.deleteSelected() } label: {
                 Label("Delete Selected…", systemImage: "trash")
             }

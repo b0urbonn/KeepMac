@@ -32,17 +32,19 @@ actor ScanEngine {
     // Directories never descended into during the project walk.
     private let pruneNames: Set<String> = [".git", ".svn", ".hg", ".Trash", "Photos Library.photoslibrary"]
 
-    // Hidden home-directory folders already covered by the fixed collectors.
-    private let homeDotSkip: Set<String> = [
-        ".cache", ".npm", ".ollama", ".lmstudio", ".gradle", ".m2", ".cargo",
-        ".rustup", ".docker", ".local", ".nvm", ".pyenv", ".rbenv", ".cocoapods",
-        ".pub-cache", ".deno", ".bun", ".android", ".orbstack", ".vscode",
-        ".cursor", ".gem", ".pulumi", ".dart", ".dotnet", ".expo", ".gradle",
-        ".config", ".yarn", ".swiftpm", ".julia", ".conda", ".minikube",
-    ]
-
     private let maxDepth = 8
     private let home = FileManager.default.homeDirectoryForCurrentUser
+
+    /// Tool-internal dirs the walk must not treat as project space —
+    /// bundled runtimes/plugins inside them aren't user dependencies, so
+    /// node_modules/.build matches there would be false positives. Their
+    /// real cleanables are claimed by the fixed collectors regardless.
+    private lazy var walkPrunePrefixes: [String] = [
+        ".claude", ".codex", ".gemini", ".copilot", ".continue", ".aider",
+        ".codeium", ".tabnine", ".cursor", ".windsurf", ".config",
+        ".local/share/devin", ".local/share/claude",
+        ".vscode-shared", ".vscode-react-native",
+    ].map { "\(home.path)/\($0)" }
 
     /// Collect every candidate path. Directory sizes are measured afterwards.
     /// `progress` is invoked periodically with the path currently being walked.
@@ -58,7 +60,28 @@ actor ScanEngine {
             found.append(Found(path: url, name: name, category: cat, isDirectory: isDir, detail: detail, caution: caution, enumeratorSize: size))
         }
 
-        for f in fixedItems() { found.append(f); seenPaths.insert(f.path.path) }
+        let fixed = fixedItems()
+        for f in fixed { found.append(f); seenPaths.insert(f.path.path) }
+
+        // Every path claimed by the fixed collectors. The walk must not
+        // descend into these (or re-report their contents) or sizes would
+        // be double-counted — e.g. ~/.cache/uv is listed as one item, so the
+        // walk skips it instead of listing every wheel inside.
+        let claimedPaths = Set(fixed.map { $0.path.path })
+
+        func isClaimedOrInside(_ url: URL) -> Bool {
+            var p = url
+            while p.pathComponents.count > 1 {
+                if claimedPaths.contains(p.path) { return true }
+                p.deleteLastPathComponent()
+            }
+            return false
+        }
+
+        func isPrunedToolDir(_ url: URL) -> Bool {
+            let path = url.path
+            return walkPrunePrefixes.contains { path == $0 || path.hasPrefix($0 + "/") }
+        }
 
         // ---- Project walk: build junk + large files ----
         let fm = FileManager.default
@@ -86,6 +109,12 @@ actor ScanEngine {
                 let isPackage = values?.isPackage ?? false
 
                 if isDir {
+                    // Never descend into a subtree already claimed by a
+                    // fixed collector — its size is already accounted for.
+                    if isClaimedOrInside(url) { enumerator.skipDescendants(); continue }
+                    // Tool-internal dirs aren't project space — skip them so
+                    // bundled deps don't surface as bogus build artifacts.
+                    if isPrunedToolDir(url) { enumerator.skipDescendants(); continue }
                     // Project build/dependency directories.
                     if specificNames.contains(name) {
                         add(url, name, .build, true, Descriptions.buildItem(name: name, parent: parent), name == ".venv" || name == "venv")
@@ -101,13 +130,15 @@ actor ScanEngine {
                     if isPackage || pruneNames.contains(name) { enumerator.skipDescendants(); continue }
                     if depth >= maxDepth { enumerator.skipDescendants(); continue }
                     if depth == 1 && parent == home {
-                        // Hidden home dirs are covered by the fixed collectors.
-                        // Downloads/Trash children are listed individually under General —
-                        // skipping here avoids double-counting. Apps are never auto-cleaned.
-                        if homeDotSkip.contains(name) || name.hasPrefix(".")
-                            || name == "Library" || name == "Downloads" || name == "Applications"
-                            // TCC-protected media libraries — walking them triggers
-                            // permission prompts and rarely finds build artifacts.
+                        // Library/Downloads/Applications are covered by the
+                        // fixed collectors or listed per-child — skipping
+                        // here avoids double-counting. Apps are never
+                        // auto-cleaned. Music/Movies/Pictures are skipped to
+                        // avoid TCC prompts. Other home dirs — including
+                        // hidden tool dirs like ~/.vscode or ~/.cache — are
+                        // walked so build output and huge files inside them
+                        // are still found (unclaimed subtrees only).
+                        if name == "Library" || name == "Downloads" || name == "Applications"
                             || name == "Music" || name == "Movies" || name == "Pictures" {
                             enumerator.skipDescendants(); continue
                         }
@@ -154,7 +185,14 @@ actor ScanEngine {
                 } else {
                     (detail, caution) = Descriptions.fixed(name: s, path: url)
                 }
-                items.append(Found(path: url, name: s, category: cat, isDirectory: dirFlag, detail: detail, caution: caution, enumeratorSize: 0))
+                // Files can't be du-measured later (enumeratorSize is used
+                // for them), so capture the size now — otherwise they'd
+                // all display as 0 bytes.
+                var size: Int64 = 0
+                if !dirFlag {
+                    size = Int64((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+                }
+                items.append(Found(path: url, name: s, category: cat, isDirectory: dirFlag, detail: detail, caution: caution, enumeratorSize: size))
             }
         }
         func single(_ path: String, cat: Category, name: String? = nil) {
@@ -242,11 +280,157 @@ actor ScanEngine {
         children(of: "\(h)/Library/Caches", cat: .general, skipping: [
             "Homebrew", "com.apple.dt.Xcode", "org.swift.swiftpm", "Yarn", "deno",
             "pip", "go-build", "CocoaPods", "org.carthage.CarthageKit", "JetBrains",
-            "dotnet", "CloudKit",
+            "dotnet",
         ])
         children(of: "\(h)/Library/Application Support/MobileSync/Backup", cat: .general)
 
+        // ---------- Wider coverage: hidden tool dirs & app caches ----------
+
+        // ~/.cache subtrees not already claimed above (uv, pkg, playwright,
+        // gh, codex/devin/claude caches, …). Claimed subdirs are skipped so
+        // nothing is double-counted.
+        children(of: "\(h)/.cache", cat: .caches, skipping: [
+            "huggingface", "lm-studio", "whisper", "torch", "torch_extensions", "pip",
+        ])
+
+        // Editor extension stores — reinstallable but often several GB.
+        single("\(h)/.vscode/extensions", cat: .caches, name: "VS Code Extensions")
+        single("\(h)/.cursor/extensions", cat: .caches, name: "Cursor Extensions")
+        single("\(h)/.windsurf/extensions", cat: .caches, name: "Windsurf Extensions")
+
+        // Alternate / extra package-manager stores.
+        single("\(h)/.npm-cache", cat: .caches, name: "npm Cache")
+        children(of: "\(h)/.gradle-home", cat: .caches)
+        children(of: "\(h)/.gradle-local", cat: .caches)
+        children(of: "\(h)/.pub-cache", cat: .caches)
+
+        // Version managers & tool runtimes outside the classic dot-dirs.
+        // Claiming them keeps the walk from flagging node_modules/venv
+        // *inside* managed installs — those aren't project dependencies.
+        children(of: "\(h)/.local/share/uv/python", cat: .caches)
+        children(of: "\(h)/.local/share/uv/tools", cat: .caches)
+        children(of: "\(h)/.local/share/fnm/node-versions", cat: .caches)
+        children(of: "\(h)/.local/share/mise/installs", cat: .caches)
+        children(of: "\(h)/.asdf/installs", cat: .caches)
+        children(of: "\(h)/.volta/tools/image/node", cat: .caches)
+        children(of: "\(h)/.volta/tools/image/packages", cat: .caches)
+        children(of: "\(h)/.proto/tools", cat: .caches)
+        children(of: "\(h)/.sdkman/candidates", cat: .caches)
+        children(of: "\(h)/.nodenv/versions", cat: .caches)
+        children(of: "\(h)/.jenv/versions", cat: .caches)
+        children(of: "\(h)/.gem", cat: .caches)
+
+        // Tool-internal caches that would otherwise surface as bogus
+        // build artifacts when the walk reaches them.
+        children(of: "\(h)/.codex/plugins", cat: .caches)
+        single("\(h)/.codex/.tmp", cat: .caches, name: "Codex Temp Files")
+        single("\(h)/.codex/cache", cat: .caches, name: "Codex Cache")
+        single("\(h)/.composer/cache", cat: .caches, name: "Composer Cache")
+        single("\(h)/.bun/install/global", cat: .caches, name: "Bun Global Packages")
+        single("\(h)/Library/pnpm/global", cat: .caches, name: "pnpm Global Packages")
+
+        // Website data & per-app HTTP storage (cookies — flagged for review).
+        children(of: "\(h)/Library/WebKit", cat: .caches)
+        children(of: "\(h)/Library/HTTPStorages", cat: .caches)
+
+        // Cache-named folders inside app-data roots (Electron/Chromium
+        // "Cache", "Code Cache", "GPUCache"…) and big sandboxed-app caches.
+        items.append(contentsOf: appDataCacheItems())
+        items.append(contentsOf: containerCacheItems())
+
+        // The app-data scan can re-find paths the editor singles above
+        // already claimed (e.g. "Code/Cache") — keep the first occurrence.
+        var seen = Set<String>()
+        return items.filter { seen.insert($0.path.path).inserted }
+    }
+
+    // MARK: - App-data & container cache discovery
+
+    /// Directory names treated as pure caches when found inside app-data
+    /// roots. Anything that holds real user state (IndexedDB, Local
+    /// Storage, Session Storage, Service Worker…) is deliberately absent.
+    private let appCacheDirNames: Set<String> = [
+        "cache", "caches", "code cache", "gpucache", "cachedata", "cacheddata",
+        "cachestorage", "cachedextensionvsixs", "cachedprofilesdata",
+        "blob_storage", "crashpad", "logs", "log", "grshadercache",
+        "graphitedawncache", "dawnwebgpucache", "dawngraphitecache",
+    ]
+
+    /// Sandboxed apps keep caches at <Container>/Data/Library/Caches. Only
+    /// containers above this size are listed — the rest is noise.
+    private let containerCacheMinSize: Int64 = 64 * 1024 * 1024
+
+    /// Finds cache-named directories inside app-data roots — catches
+    /// Electron/Chromium caches the fixed list can't know about, e.g.
+    /// "Slack/Cache" or "Google/Chrome/Default/Code Cache".
+    private func appDataCacheItems() -> [Found] {
+        var items: [Found] = []
+        for root in ["\(home.path)/Library/Application Support", "\(home.path)/Library/Group Containers"] {
+            items.append(contentsOf: cacheDirs(under: root))
+        }
         return items
+    }
+
+    private func cacheDirs(under root: String, maxDepth: Int = 3) -> [Found] {
+        let fm = FileManager.default
+        guard let apps = try? fm.contentsOfDirectory(atPath: root) else { return [] }
+        var items: [Found] = []
+        for app in apps where !app.hasPrefix(".") && app != "MobileSync" {
+            let appURL = URL(fileURLWithPath: root).appendingPathComponent(app)
+            var appIsDir: ObjCBool = false
+            guard fm.fileExists(atPath: appURL.path, isDirectory: &appIsDir), appIsDir.boolValue,
+                  (try? appURL.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink != true
+            else { continue }
+            var stack: [(url: URL, label: String, depth: Int)] = [(appURL, app, 0)]
+            while let (dir, label, depth) = stack.popLast() {
+                guard depth < maxDepth,
+                      let subs = try? fm.contentsOfDirectory(atPath: dir.path) else { continue }
+                for s in subs where !s.hasPrefix(".") {
+                    let child = dir.appendingPathComponent(s)
+                    var isDir: ObjCBool = false
+                    guard fm.fileExists(atPath: child.path, isDirectory: &isDir), isDir.boolValue,
+                          (try? child.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink != true
+                    else { continue }
+                    if appCacheDirNames.contains(s.lowercased()) {
+                        let (detail, caution) = Descriptions.fixed(name: s, path: child)
+                        items.append(Found(path: child, name: "\(label)/\(s)", category: .caches,
+                                           isDirectory: true, detail: detail, caution: caution,
+                                           enumeratorSize: 0))
+                    } else {
+                        stack.append((child, "\(label)/\(s)", depth + 1))
+                    }
+                }
+            }
+        }
+        return items
+    }
+
+    /// Sandboxed-app caches under ~/Library/Containers, pre-measured so
+    /// only meaningful ones (≥ containerCacheMinSize) become items.
+    private func containerCacheItems() -> [Found] {
+        let dir = "\(home.path)/Library/Containers"
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return [] }
+        let targets = names.filter {
+            !$0.hasPrefix(".") && !$0.contains("docker") && !$0.contains("orbstack")
+        }
+        var results = [Found?](repeating: nil, count: targets.count)
+        DispatchQueue.concurrentPerform(iterations: targets.count) { i in
+            let name = targets[i]
+            let cache = "\(dir)/\(name)/Data/Library/Caches"
+            var isDir: ObjCBool = false
+            // Most container caches are empty — skip the du spawn for those.
+            guard FileManager.default.fileExists(atPath: cache, isDirectory: &isDir), isDir.boolValue,
+                  let subs = try? FileManager.default.contentsOfDirectory(atPath: cache), !subs.isEmpty
+            else { return }
+            let url = URL(fileURLWithPath: cache)
+            let size = SizeMeasurer.measure(url, isDirectory: true)
+            guard size >= containerCacheMinSize else { return }
+            let (detail, caution) = Descriptions.fixed(name: name, path: url)
+            results[i] = Found(path: url, name: "\(name) — Caches", category: .caches,
+                               isDirectory: true, detail: detail, caution: caution,
+                               enumeratorSize: 0)
+        }
+        return results.compactMap { $0 }
     }
 }
 

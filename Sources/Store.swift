@@ -137,13 +137,23 @@ final class Store: ObservableObject {
     var totalSelected: Int64 { selectedItems.reduce(0) { $0 + $1.size } }
     var deletionTotal: Int64 { deletionCandidates.reduce(0) { $0 + $1.size } }
 
-    func setSelection(_ value: Bool, for category: Category?) {
+    func setSelection(_ value: Bool, for category: Category?, includeCaution: Bool = false) {
         // nil means "the current view": the filtered categories, or everything.
         let cats = category.map { Set([$0]) } ?? (categoryFilter.isEmpty ? nil : categoryFilter)
         for i in items.indices where (cats?.contains(items[i].category) ?? true) {
-            if items[i].caution && value { continue }   // never mass-select caution items
+            if items[i].caution && value && !includeCaution { continue }   // never mass-select caution items
             items[i].isSelected = value
         }
+    }
+
+    /// One-click cleanup: selects every non-caution item and opens the
+    /// delete-confirmation sheet. Items marked "needs review" are never
+    /// auto-selected — the user opts into those individually.
+    func cleanAllSafe() {
+        let safe = items.filter { !$0.caution }
+        guard !safe.isEmpty else { return }
+        for i in items.indices where !items[i].caution { items[i].isSelected = true }
+        requestDelete(safe)
     }
 
     // MARK: - Scanning

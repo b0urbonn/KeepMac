@@ -19,8 +19,19 @@ struct KeepMacApp: App {
                 Button("Rescan") { store.rescan() }
                     .keyboardShortcut("r", modifiers: .command)
                     .disabled(store.mode != .storage || store.scanning || store.deleting)
+                Button("Clean All Safe…") { store.cleanAllSafe() }
+                    .keyboardShortcut("c", modifiers: [.command, .shift])
+                    .disabled(store.mode != .storage || store.scanning || store.deleting)
             }
         }
+
+        MenuBarExtra {
+            MenuBarPanel()
+                .environmentObject(store)
+        } label: {
+            Image(systemName: store.scanning ? "internaldrive.fill.badge.clock" : "internaldrive.fill")
+        }
+        .menuBarExtraStyle(.window)
 
         Settings {
             SettingsView()

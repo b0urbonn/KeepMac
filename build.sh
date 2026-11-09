@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 APP_NAME="KeepMac"
-VERSION="1.0"
+VERSION="1.1.0"
 DIST="dist"
 BUILD="build"
 SDK="$(xcrun --sdk macosx --show-sdk-path)"

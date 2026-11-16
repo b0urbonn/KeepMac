@@ -24,120 +24,118 @@ struct WindowConfigurator: NSViewRepresentable {
 
 struct ContentView: View {
     @EnvironmentObject var store: Store
+    @EnvironmentObject var monitor: ProcessMonitor
+    @EnvironmentObject var preferences: AppPreferences
 
     private var shownItems: [CleanableItem] {
         store.visibleItems.sorted(using: store.sortOrder)
     }
 
     var body: some View {
-        NavigationSplitView {
-            GeometryReader { geometry in
-                VStack(spacing: 0) {
-                    SidebarHeader().frame(height: 76)
-                    sidebarList
-                        .frame(height: max(0, geometry.size.height - 224))
-                        .clipped()
-                    SidebarFooter().frame(height: 148)
+        VStack(spacing: 0) {
+            consoleHeader
+            Divider()
+            Group {
+                switch store.mode {
+                case .overview: DashboardView()
+                case .processes: ProcessDetailView()
+                case .storage: storageWorkspace
                 }
-                .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
             }
-            .navigationSplitViewColumnWidth(min: 230, ideal: 250, max: 290)
-        } detail: {
-            GeometryReader { geometry in
-                if store.mode == .processes {
-                    ProcessDetailView()
-                } else {
-                // Native Table/List views have a large ideal height. Give the
-                // browser an explicit viewport instead of letting it push the
-                // header and inspector outside the window's visible bounds.
-                let hasDetail = store.items.contains { $0.id == store.selectedItemID }
-                let headingHeight: CGFloat = 64
-                let filterHeight: CGFloat = 44
-                let filterBarHeight: CGFloat = 40
-                let cleanupHeight: CGFloat = 68
-                let summaryHeight: CGFloat = store.items.isEmpty ? 0 : 136
-                let inspectorHeight: CGFloat = hasDetail ? 124 : 54
-                let browserHeight = max(0, geometry.size.height - headingHeight - summaryHeight - filterHeight - filterBarHeight - inspectorHeight - cleanupHeight - 3)
-                VStack(spacing: 0) {
-                    HeaderView().frame(height: headingHeight).clipped()
-                    if !store.items.isEmpty {
-                        StorageBar(compact: true).frame(height: summaryHeight).clipped()
-                    }
-                    BrowserHeader(count: shownItems.count).frame(height: filterHeight).clipped()
-                    FilterBar().frame(height: filterBarHeight).clipped()
-                    Divider().frame(height: 1)
-                    VStack(spacing: 0) { content }
-                        .frame(height: browserHeight)
-                        .clipped()
-                    Divider().frame(height: 1)
-                    DetailPanel(compact: true)
-                        .frame(height: inspectorHeight)
-                        .clipped()
-                    Divider().frame(height: 1)
-                    CleanupBar().frame(height: cleanupHeight).clipped()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+        .background(WindowConfigurator())
+        .navigationTitle("KeepMac")
+        .sheet(isPresented: $store.showDeleteConfirm) {
+            DeleteConfirmView().environmentObject(store)
+        }
+        .sheet(isPresented: $monitor.showEndOfDay) { EndOfDayView() }
+        .sheet(isPresented: $preferences.showSetup) { SetupView() }
+    }
+
+    private var consoleHeader: some View {
+        HStack(spacing: 24) {
+            HStack(spacing: 10) {
+                Image(systemName: "terminal.fill")
+                    .font(.title3).foregroundStyle(.mint)
+                    .frame(width: 36, height: 36)
+                    .background(.mint.opacity(0.12), in: .rect(cornerRadius: 10))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("KeepMac").font(.system(size: 15, weight: .bold))
+                    Text("DEVELOPER CONSOLE")
+                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                        .tracking(1.2).foregroundStyle(.secondary)
                 }
-                .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
+            }
+            HStack(spacing: 4) {
+                ForEach(AppMode.allCases) { mode in
+                    Button { store.mode = mode } label: {
+                        Label(mode.rawValue, systemImage: mode.icon)
+                            .font(.system(size: 12, weight: .semibold))
+                            .padding(.horizontal, 13).padding(.vertical, 10)
+                            .foregroundStyle(store.mode == mode ? Color.primary : Color.secondary)
+                            .background(store.mode == mode ? Color.accentColor.opacity(0.13) : .clear,
+                                        in: .rect(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(store.mode == mode ? .isSelected : [])
+                }
+            }
+            .padding(4)
+            .background(.primary.opacity(0.035), in: .rect(cornerRadius: 12))
+            Spacer(minLength: 0)
+            Button { store.rescan() } label: {
+                Label(store.scanning ? "Scanning…" : "Scan storage", systemImage: "arrow.clockwise")
+            }
+            .disabled(store.scanning || store.deleting)
+            .help("Scan storage again (⌘R)")
+            SettingsLink { Label("Settings", systemImage: "slider.horizontal.3") }
+                .help("Settings")
+        }
+        .padding(.horizontal, 24).padding(.vertical, 12)
+    }
+
+    private var storageWorkspace: some View {
+        VStack(spacing: 0) {
+            HeaderView().padding(.top, 10)
+            HStack(spacing: 8) {
+                categoryButton(nil)
+                ForEach(Category.allCases) { category in categoryButton(category) }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 24).padding(.vertical, 12)
+            VStack(spacing: 0) {
+                BrowserHeader(count: shownItems.count).padding(.vertical, 10)
+                FilterBar().padding(.bottom, 8)
+                Divider()
+                content.frame(maxWidth: .infinity, maxHeight: .infinity)
+                if store.selectedItemID != nil {
+                    Divider()
+                    DetailPanel(compact: false)
                 }
             }
             .background(Color(nsColor: .controlBackgroundColor))
-            .navigationTitle(store.mode == .processes ? "Processes" : store.viewTitle)
-            .toolbarBackground(.visible, for: .windowToolbar)
-            .toolbar {
-                ToolbarItemGroup(placement: .primaryAction) {
-                    Picker("Mode", selection: $store.mode) {
-                        Text("Storage").tag(AppMode.storage)
-                        Text("Processes").tag(AppMode.processes)
-                    }
-                    .pickerStyle(.segmented)
-                    .fixedSize()
-                    .help("Switch between storage cleanup and the process monitor")
-                    Button { store.rescan() } label: {
-                        Label("Rescan", systemImage: "arrow.clockwise")
-                    }
-                    .keyboardShortcut("r", modifiers: .command)
-                    .disabled(store.mode != .storage || store.scanning || store.deleting)
-                    .help("Scan again (⌘R)")
-                    SettingsLink { Label("Settings", systemImage: "gearshape") }
-                        .help("Settings (⌘,)")
-                }
-            }
-        }
-        .background(WindowConfigurator())
-        .sheet(isPresented: $store.showDeleteConfirm) {
-            DeleteConfirmView()
-                .environmentObject(store)
+            .clipShape(.rect(cornerRadius: 12))
+            .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(0.08)) }
+            .padding(.horizontal, 24).padding(.bottom, 12)
+            CleanupBar()
         }
     }
 
-    private var sidebarList: some View {
-        Group {
-            if store.mode == .processes {
-                ProcessSidebar()
-            } else {
-                storageSidebarList
-            }
+    private func categoryButton(_ category: Category?) -> some View {
+        let active = category == nil ? store.categoryFilter.isEmpty : store.categoryFilter == Set([category!])
+        return Button {
+            store.categoryFilter = category.map { Set([$0]) } ?? []
+        } label: {
+            Label(category?.rawValue ?? "All storage", systemImage: category?.icon ?? "internaldrive")
+                .font(.system(size: 11, weight: .medium))
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .background(active ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.04),
+                            in: .rect(cornerRadius: 7))
+                .foregroundStyle(active ? Color.accentColor : .secondary)
         }
-    }
-
-    private var storageSidebarList: some View {
-        List(selection: store.categorySelection) {
-            Section("Storage") {
-                SidebarRow(label: "All Items", icon: "square.grid.2x2.fill",
-                           count: store.items.count, size: store.totalFound, color: .accentColor)
-                    .tag(Optional<Category>.none)
-            }
-            Section("Categories") {
-                ForEach(Category.allCases) { cat in
-                    let catItems = store.items(for: cat)
-                    SidebarRow(label: cat.rawValue, icon: cat.icon,
-                               count: catItems.count,
-                               size: catItems.reduce(0) { $0 + $1.size }, color: cat.color)
-                        .tag(Optional(cat))
-                        .help(cat.subtitle)
-                }
-            }
-        }
-        .listStyle(.sidebar)
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder private var content: some View {
@@ -267,14 +265,14 @@ struct HeaderView: View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(store.selectedCategory?.rawValue ?? "Make space for what’s next.")
+                    Text(store.selectedCategory?.rawValue ?? "Storage workspace")
                         .font(.system(size: 22, weight: .bold, design: .rounded))
                         .lineLimit(1)
                         .accessibilityAddTraits(.isHeader)
-                    Text(store.selectedCategory?.subtitle ?? "A little less clutter. A lot more possibility.")
+                    Text(store.selectedCategory?.subtitle ?? "Inspect generated files, tool caches, and local model data.")
                         .font(.caption).foregroundStyle(.secondary)
                         .lineLimit(1)
-                        .help(store.selectedCategory?.subtitle ?? "A little less clutter. A lot more possibility.")
+                        .help(store.selectedCategory?.subtitle ?? "Inspect generated files, tool caches, and local model data.")
                 }
                 Spacer(minLength: 0)
                 if store.scanning || store.deleting {
@@ -672,7 +670,6 @@ struct ItemTable: View {
 struct DeleteConfirmView: View {
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var explainer = Explainer()
 
     private var items: [CleanableItem] { store.deletionCandidates }
     private var total: Int64 { items.reduce(0) { $0 + $1.size } }
@@ -725,7 +722,6 @@ struct DeleteConfirmView: View {
             .frame(maxHeight: 190)
             .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 10))
 
-            aiSummary
 
             HStack {
                 Button("Cancel") { dismiss() }
@@ -742,50 +738,9 @@ struct DeleteConfirmView: View {
         }
         .padding(20)
         .frame(width: 560)
-        .task { explainer.summarize(items) }
+
     }
 
-    @ViewBuilder private var aiSummary: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: "apple.intelligence").foregroundStyle(.purple)
-                Text(items.count == 1 ? "What happens if you delete it"
-                                      : "What happens if you delete these")
-                    .font(.callout.bold())
-                Spacer()
-                if case .done = explainer.state {
-                    Button { explainer.summarize(items) } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Regenerate answer")
-                }
-            }
-            if let reason = Explainer.availabilityMessage {
-                Text(reason).font(.callout).foregroundStyle(.secondary)
-            } else if case .generating = explainer.state {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Asking Apple Intelligence…")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-            } else if case .done = explainer.state {
-                Text(explainer.output)
-                    .font(.callout)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-            } else if case .failed = explainer.state {
-                HStack(spacing: 8) {
-                    Text("Apple Intelligence couldn't answer.")
-                        .font(.callout).foregroundStyle(.secondary)
-                    Button("Try Again") { explainer.summarize(items) }
-                        .controlSize(.small)
-                }
-            }
-        }
-        .padding(10)
-        .background(.purple.opacity(0.08), in: .rect(cornerRadius: 10))
-    }
 }
 
 // MARK: - Detail / explanation panel
@@ -793,7 +748,6 @@ struct DeleteConfirmView: View {
 struct DetailPanel: View {
     @EnvironmentObject var store: Store
     var compact = false
-    @StateObject private var explainer = Explainer()
 
     private var item: CleanableItem? {
         store.items.first { $0.id == store.selectedItemID }
@@ -835,7 +789,6 @@ struct DetailPanel: View {
                         Text(item.detail)
                             .font(.callout)
                             .foregroundStyle(.secondary)
-                        aiSection(item)
                     }
                     .padding(.horizontal, 24)
                     .padding(.vertical, 16)
@@ -855,60 +808,5 @@ struct DetailPanel: View {
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .clipped()
-        .onChange(of: store.selectedItemID) { _, newID in
-            explainer.select(store.items.first { $0.id == newID })
-        }
-    }
-
-    @ViewBuilder private func aiSection(_ item: CleanableItem) -> some View {
-        Divider()
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: "apple.intelligence").foregroundStyle(.purple)
-                Text("What happens if you delete it").font(.callout.bold())
-                Spacer()
-                if case .done = explainer.state {
-                    Button { explainer.regenerate(item) } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Regenerate answer")
-                }
-            }
-            if let reason = Explainer.availabilityMessage {
-                HStack(spacing: 8) {
-                    Text(reason).font(.callout).foregroundStyle(.secondary)
-                    Button("Open System Settings") {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.Siri-Settings-Extension") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
-                    .controlSize(.small)
-                }
-            } else if case .generating = explainer.state {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Asking Apple Intelligence…")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-            } else if case .done = explainer.state {
-                Text(explainer.output)
-                    .font(.callout)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-            } else if case .failed = explainer.state {
-                HStack(spacing: 8) {
-                    Text("Apple Intelligence couldn't answer.")
-                        .font(.callout).foregroundStyle(.secondary)
-                    Button("Try Again") { explainer.regenerate(item) }
-                        .controlSize(.small)
-                }
-            } else {
-                Button { explainer.explain(item) } label: {
-                    Label("Explain with Apple Intelligence", systemImage: "sparkles")
-                }
-                .controlSize(.small)
-            }
-        }
     }
 }

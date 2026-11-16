@@ -38,10 +38,18 @@ enum Category: String, CaseIterable, Identifiable {
 }
 
 enum AppMode: String, CaseIterable, Identifiable {
+    case overview = "Overview"
     case storage = "Storage"
     case processes = "Processes"
 
     var id: String { rawValue }
+    var icon: String {
+        switch self {
+        case .overview: return "square.grid.2x2"
+        case .storage: return "internaldrive"
+        case .processes: return "waveform.path.ecg"
+        }
+    }
 }
 
 enum KindFilter: String, CaseIterable, Identifiable {

@@ -10,7 +10,7 @@ final class Store: ObservableObject {
     @Published var deleting = false
     @Published var statusText = ""
     @Published var selectedItemID: String?
-    @Published var mode: AppMode = .storage
+    @Published var mode: AppMode = .overview
     @Published var categoryFilter = Set<Category>()   // empty = all categories
     @Published var kindFilter = KindFilter.all        // files / folders / all
     @Published var minSizeFilter: Int64 = 0           // bytes; 0 = any size
